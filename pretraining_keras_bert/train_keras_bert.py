@@ -9,7 +9,7 @@ import random
 import re
 import os
 import numpy as np
-batch_size = 32
+batch_size = 32*4
 path_vocab = '/search/odin/guobk/streaming/vpa/bert4keras/pretraining/vocab.txt'
 path_data = '/search/odin/guobk/streaming/vpa/data/data_inputs/*/*-seg/sents.txt'
 path_save = 'model_kerasBert/model.h5'
