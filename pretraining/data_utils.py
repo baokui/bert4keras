@@ -3,13 +3,28 @@
 
 import os
 os.environ['TF_KERAS'] = '1'  # 必须使用tf.keras
-
 import numpy as np
 import tensorflow as tf
 from bert4keras.snippets import parallel_apply
 from bert4keras.backend import K
 
-
+def getVocab(files,min_nb=1000):
+    D = {}
+    for file in files:
+        f = open(file,'r',encoding='utf-8')
+        for line in f:
+            line = line.strip()
+            s = line.split(' ')
+            for ss in s:
+                if ss not in D:
+                    D[ss]=1
+                else:
+                    D[ss]+=1
+        f.close()
+    T = [(d,D[d]) for d in D]
+    T = sorted(T,key=lambda x:-x[1])
+    S = [t for t in D if D[t]>min_nb and len(t)>0]
+    return S
 class TrainingDataset(object):
     """预训练数据集生成器
     """
@@ -305,18 +320,26 @@ if __name__ == '__main__':
     sequence_length = 512
     workers = 40
     max_queue_size = 4000
-    dict_path = '/home/spaces_ac_cn/chinese_L-12_H-768_A-12/vocab.txt'
+    dict_path = 'vocab.txt'
     tokenizer = Tokenizer(dict_path, do_lower_case=True)
 
-    def some_texts():
-        filenames = glob.glob('/home/spaces_ac_cn/corpus/*/*/*')
+    def some_texts(sym_sents = ',.!?;，。！？；'):
+        filenames = glob.glob('/search/odin/guobk/streaming/vpa/data/data_inputs/*/*-seg/sents.txt')
+        filenames = [filenames[0]]
+        filenames = ['sents.txt']
+        pattern = u'.*?[\n'+sym_sents+']+'
         np.random.shuffle(filenames)
         count, texts = 0, []
         for filename in filenames:
             with open(filename) as f:
                 for l in f:
-                    l = json.loads(l)['text'].strip()
-                    texts.extend(re.findall(u'.*?[\n。]+', l))
+                    #l = json.loads(l)['text'].strip()
+                    l = l.strip()
+                    sents = re.findall(pattern, l)
+                    if len(sents)==0:
+                        texts.extend([l])
+                    else:
+                        texts.extend(sents)
                     count += 1
                     if count == 10:  # 10篇文章合在一起再处理
                         yield texts
@@ -332,7 +355,8 @@ if __name__ == '__main__':
         jieba.initialize()
 
         def word_segment(text):
-            return jieba.lcut(text)
+            return text.split(' ')
+            #return jieba.lcut(text)
 
         TD = TrainingDatasetRoBERTa(tokenizer, word_segment, sequence_length=sequence_length)
 
