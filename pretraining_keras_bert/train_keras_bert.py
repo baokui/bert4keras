@@ -35,18 +35,19 @@ def getVocab(path_vocab):
     return token_dict,token_list
 def build_model(token_dict):
     # Build & train the model
-    model = get_model(
-        token_num=len(token_dict),
-        head_num=head_num,
-        transformer_num=transformer_num,
-        embed_dim=embed_dim,
-        feed_forward_dim=feed_forward_dim,
-        seq_len=seq_len,
-        pos_num=pos_num,
-        dropout_rate=0.05,
-    )
-    compile_model(model)
-    model.summary()
+    with tf.device('/cpu:0'):
+        model = get_model(
+            token_num=len(token_dict),
+            head_num=head_num,
+            transformer_num=transformer_num,
+            embed_dim=embed_dim,
+            feed_forward_dim=feed_forward_dim,
+            seq_len=seq_len,
+            pos_num=pos_num,
+            dropout_rate=0.05,
+        )
+        compile_model(model)
+        model.summary()
     return model
 #optimizer = AdamWarmup(total_steps, warmup_steps, lr=1e-3, min_lr=1e-5)
 def get_sentence_pairs(files,batch_size,sym_sents = ',.!?;，。！？；',min_seqlen=4):
@@ -112,13 +113,16 @@ def get_multiGPU_model(model):
     compile_model(model_multi)
     if os.path.exists(path_save):
         model_multi.load_weights(path_save)
+        print('model initialized from pretrained model')
+    else:
+        print('model initialized randomly')
     return model_multi
 def main():
     checkpoint = keras.callbacks.ModelCheckpoint(filepath=path_save, monitor='val_loss',
                                      verbose=0, save_best_only=True, save_weights_only=True, mode='auto', period=1)
     earlyStopping = keras.callbacks.EarlyStopping(monitor='val_loss', patience=30)
     token_dict,token_list = getVocab(path_vocab)
-    model = build_model(token_dict,path_save)
+    model = build_model(token_dict)
     model_multi = get_multiGPU_model(model)
     model_multi.fit_generator(
         generator=_generator(batch_size,token_dict,token_list),
@@ -128,5 +132,43 @@ def main():
         validation_steps=validation_steps,
         callbacks=[checkpoint, earlyStopping],
     )
+    iter = _generator(batch_size, token_dict, token_list)
+    model_multi.fit()
+def test():
+    import tensorflow as tf
+    from keras.applications import Xception
+    from keras.utils import multi_gpu_model
+    from keras.layers import Input, Dense
+    from keras.models import Model
+    import numpy as np
+    num_samples = 1000
+    height = 80
+    width = 80
+    num_classes = 1000
+    # 实例化基础模型（或者「模版」模型）。
+    # 我们推荐在 CPU 设备范围内做此操作，
+    # 这样模型的权重就会存储在 CPU 内存中。
+    # 否则它们会存储在 GPU 上，而完全被共享。
+    with tf.device('/cpu:0'):
+        inputs = Input((1024,))
+        x = Dense(num_classes, activation='relu')(inputs)
+        x = Dense(num_classes, activation='relu')(x)
+        x = Dense(num_classes, activation='relu')(x)
+        x = Dense(num_classes, activation='relu')(x)
+        outputs =Dense(num_classes, activation='relu')(x)
+        model = Model(inputs=inputs,outputs=outputs)
+    # 复制模型到 8 个 GPU 上。
+    # 这假设你的机器有 8 个可用 GPU。
+    parallel_model = multi_gpu_model(model, gpus=4)
+    parallel_model.compile(loss='categorical_crossentropy',
+                           optimizer='rmsprop')
+    from keras_bert import get_base_dict, get_model, compile_model
+    compile_model(parallel_model)
+    # 生成虚拟数据
+    x = np.random.random((num_samples*1000, 1024))
+    y = np.random.random((num_samples*1000, num_classes))
+    # 这个 `fit` 调用将分布在 8 个 GPU 上。
+    # 由于 batch size 是 256, 每个 GPU 将处理 32 个样本。
+    parallel_model.fit(x, y, epochs=20, batch_size=256)
 if __name__=='__main__':
     main()
